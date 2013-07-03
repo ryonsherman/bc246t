@@ -124,7 +124,7 @@ class Device(object):
 
     def command(self, command, *args):
         """ Execute Command """
-        args = [str(arg) for arg in args]
+        args = map(str, args)
         command = "%s\r" % command if not args else "%s,%s\r" % (command, ','.join(args))
         self.serial.writelines(command)
         response = self.serial.readline().strip()
