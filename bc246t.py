@@ -1,4 +1,16 @@
+#!/usr/bin/env python2
+
 import serial
+
+
+class MetaDevice(type):
+    @classmethod
+    def keys(cls, *keys):
+        def wrapper(func):
+            def method(*args, **kwargs):
+                return dict(zip(list(keys), func(*args, **kwargs)))
+            return method
+        return wrapper
 
 
 class Device(object):
@@ -14,6 +26,8 @@ class Device(object):
         Return Code     : Carriage Return only
 
     """
+
+    __metaclass__ = MetaDevice
 
     class KEY_CODE:
         MENU = 'M'
@@ -81,6 +95,19 @@ class Device(object):
         CLOSE = 0
         OPEN = 1
 
+    class BOOLEAN:
+        OFF = 0
+        ON = 1
+
+    class BATTERY_SAVE(BOOLEAN):
+        pass
+
+    class KEY_BEEP(BOOLEAN):
+        pass
+
+    class PRIORITY_MODE(BOOLEAN):
+        PLUS_ON = 2
+
     def __init__(self, port, baudrate=57600, timeout=0.1):
         """ Initialize Device """
         self.port = port
@@ -112,7 +139,8 @@ class Device(object):
         if response == "ORER":
             raise OverrunErrorException
 
-        return response.split(',')[1:] if response.split(',')[0] == command else response
+        response = response.split(',')[1:] if response.split(',')[0] == command.strip() else response
+        return response[0] if len(response) == 1 else response
 
     @property
     def model(self):
@@ -147,6 +175,7 @@ class Device(object):
         return self.command('VER')[2:]
 
     @property
+    @MetaDevice.keys('sys_type', 'tgid', 'id_srch_mode', 'name1', 'name2', 'name3')
     def talkgroup(self):
         """
             Get Current Talkgroup ID Status
@@ -168,10 +197,10 @@ class Device(object):
 
         """
 
-        keys = ['sys_type', 'tgid', 'id_srch_mode', 'name1', 'name2', 'name3']
-        return dict(zip(keys, self.command('GID')))
+        return self.command('GID')
 
     @property
+    @MetaDevice.keys('l1_char', 'l1_mode', 'l2_char', 'l2_mode', 'icon1', 'icon2', 'reserve', 'sql', 'mut', 'bat', 'wat')
     def status(self):
         """
             Get Current Status
@@ -202,8 +231,7 @@ class Device(object):
 
         """
 
-        keys = ['l1_char', 'l1_mode', 'l2_char', 'l2_mode', 'icon1', 'icon2', 'reserve', 'sql', 'mut', 'bat', 'wat']
-        return dict(zip(keys, self.command('STS')))
+        return self.command('STS')
 
     @property
     def program(self):
@@ -420,7 +448,7 @@ class Settings(object):
             NOTE: This command is only acceptable in Programming Mode.
 
         """
-        return self.device.command('BSV')
+        return bool(self.device.command('BSV'))
 
     @battery_save.setter
     def battery_save(self, value):
@@ -460,7 +488,7 @@ class Settings(object):
             NOTE: This command is only acceptable in Programming Mode.
 
         """
-        return self.device.command('KBP')
+        return bool(self.device.command('KBP'))
 
     @key_beep.setter
     def key_beep(self, value):
@@ -483,6 +511,7 @@ class Settings(object):
         self.device.command('KBP', value)
 
     @property
+    @MetaDevice.keys('l1_char', 'l2_char')
     def opening_message(self):
         """
             Get Opening Message
@@ -500,7 +529,7 @@ class Settings(object):
                   If only space code is set in character area, the command returns the default message.
 
         """
-        return dict(zip(['l1_char', 'l2_char'], self.device.command('OMS')))
+        return self.device.command('OMS')
 
     @opening_message.setter
     def opening_message(self, l1_char, l2_char):
@@ -539,7 +568,7 @@ class Settings(object):
             NOTE: This command is only acceptable in Programming Mode.
 
         """
-        return self.device.command('PRI')
+        return int(self.device.command('PRI'))
 
     @priority_mode.setter
     def priority_mode(self, value):
@@ -658,37 +687,166 @@ class OverrunErrorException(Exception):
         Exception.__init__(self, "Overrun error")
 
 
+import unittest
+
+
+class TestCase(unittest.TestCase):
+    def setUp(self):
+        self.port = '/dev/ttyUSB0'
+        self.dev = Device(port=self.port)
+
+    def tearDown(self):
+        self.dev = None
+
+    def assertStringNotEmpty(self, value):
+        self.assertIs(type(value), str)
+        self.assertGreater(len(value), 0)
+
+    def assertDictNotEmpty(self, value):
+        self.assertIs(type(value), dict)
+        self.assertGreater(len(filter(lambda x: x, value.values())), 0)
+
+    def assertValidValue(self, value, obj_type, options):
+        self.assertIs(type(value), obj_type)
+        self.assertIn(value, [getattr(options, attr) for attr in filter(lambda x: not x.startswith('_'), dir(options))])
+
+    def assertBooleanSet(self, value):
+        _value = value
+        value = not _value
+        getattr(self, 'assert%s' % (not _value))(value)
+        value = _value
+
+
+class DeviceTestCase(TestCase):
+    def test_get_port(self):
+        self.assertIs(type(self.dev.port), str)
+        self.assertEqual(self.dev.port, self.port)
+
+    def test_get_baudrate(self):
+        self.assertIs(type(self.dev.baudrate), int)
+        self.assertGreater(self.dev.baudrate, 0)
+
+    def test_get_model(self):
+        self.assertStringNotEmpty(self.dev.model)
+
+    def test_get_firmware(self):
+        self.assertStringNotEmpty(self.dev.firmware)
+
+    def test_get_talkgroup(self):
+        self.assertIs(type(self.dev.talkgroup), dict)
+
+    def test_get_status(self):
+        self.assertDictNotEmpty(self.dev.status)
+
+    def test_get_program(self):
+        self.assertIs(type(self.dev.program), bool)
+
+    def test_set_program(self):
+        self.assertBooleanSet(self.dev.program)
+
+
+class SettingsTestCase(TestCase):
+    def setUp(self):
+        TestCase.setUp(self)
+        self.dev.program = True
+
+    def tearDown(self):
+        self.dev.program = False
+        TestCase.tearDown(self)
+
+    def test_get_backlight(self):
+        self.assertValidValue(self.dev.settings.backlight, str, Device.BACKLIGHT)
+
+    def test_set_backlight(self):
+        pass
+
+    def test_get_battery_save(self):
+        self.assertValidValue(self.dev.settings.battery_save, bool, Device.BATTERY_SAVE)
+
+    def test_set_battery_save(self):
+        pass
+
+    def test_get_key_beep(self):
+        self.assertValidValue(self.dev.settings.key_beep, bool, Device.KEY_BEEP)
+
+    def test_set_key_beep(self):
+        pass
+
+    def test_get_opening_message(self):
+        self.assertDictNotEmpty(self.dev.settings.opening_message)
+
+    def test_set_opening_message(self):
+        pass
+
+    def test_get_priority_mode(self):
+        self.assertValidValue(self.dev.settings.priority_mode, int, Device.PRIORITY_MODE)
+
+    def test_set_priority_mode(self):
+        pass
+
+
 if __name__ == '__main__':
-    dev = Device('/dev/ttyUSB0')
+    from optparse import OptionParser
 
-    print "Port: %s" % dev.port
-    print "Baudrate: %s" % dev.baudrate
-    print "Model: %s" % dev.model
-    print "Firmware: %s" % dev.firmware
+    parser = OptionParser(usage="Usage: %prog [options] command (arguments)")
+    parser.add_option('-p', '--port', dest='port', metavar='PORT', default=0, help="a /dev/ttyUSB[PORT] number (default %default) or a device name")
+    parser.add_option('-b', '--baud', dest='baud', metavar='BAUDRATE', default=57600, help="set baud rate, default %default")
+    parser.add_option('-t', '--timeout', dest='timeout', metavar='TIMEOUT', default=0.1, help="a read timeout value, default %default")
+    options, args = parser.parse_args()
 
-    dev.program = True
-    if dev.program:
-        # print "Backlight: %s" % dev.settings.backlight
-        # print "Battery Save: %s" % dev.settings.battery_save
-        # print "Key Beep: %s" % dev.settings.key_beep
-        # print "Opening Message: %s" % dev.settings.opening_message
-        # print "Priority Mode: %s" % dev.settings.priority_mode
+    try:
+        options.port = '/dev/ttyUSB%d' % int(options.port)
+    except ValueError:
+        pass
 
-        # print "System Count: %s" % len(dev.systems)
-        # for i in range(1, 2):
-        #     sys = System()
-        #     dev.systems.append(sys)
+    try:
+        dev = Device(port=options.port, baudrate=options.baud, timeout=options.timeout)
+    except serial.serialutil.SerialException, error:
+        exit("%s: %s" % (__file__, error))
 
-        print "System Count: %s" % len(dev.systems)
-        for sys in dev.systems:
-            print "Index: %s" % sys.index
-            # dev.systems.remove(sys)
-        print "System Count: %s" % len(dev.systems)
+    def print_help():
+        parser.print_help()
+        exit(-1)
 
-        print "System Head: %s" % dev.systems.head
-        print "System Tail: %s" % dev.systems.tail
+    if not len(args):
+        print_help()
 
-        # print "Clearing settings..."
-        # dev.settings.clear()
+    command = args.pop(0)
 
-        dev.program = False
+    ret = dev
+    for attr in command.split('.'):
+        try:
+            ret = getattr(ret, attr)
+        except CommandUnavailableException:
+            dev.program = True
+            ret = getattr(ret, attr)
+            dev.program = False
+        except AttributeError, error:
+            print_help()
+
+    if callable(ret):
+        if not len(args):
+            print_help()
+        ret = ret(*args)
+    print ret
+
+    # dev.program = True
+    # if dev.program:
+    #     # print "System Count: %s" % len(dev.systems)
+    #     # for i in range(1, 2):
+    #     #     sys = System()
+    #     #     dev.systems.append(sys)
+
+    #     print "System Count: %s" % len(dev.systems)
+    #     for sys in dev.systems:
+    #         print "Index: %s" % sys.index
+    #         # dev.systems.remove(sys)
+    #     print "System Count: %s" % len(dev.systems)
+
+    #     print "System Head: %s" % dev.systems.head
+    #     print "System Tail: %s" % dev.systems.tail
+
+    #     # print "Clearing settings..."
+    #     # dev.settings.clear()
+
+    #     dev.program = False
