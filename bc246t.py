@@ -1,16 +1,12 @@
 #!/usr/bin/env python2
 
+# TODO: Return constants (or array of) instead of (or along with) raw results.
+#   Ex: ['10', {'opt1': Device.const.true, 'opt2': Device.const.false}]
+# TODO: return constant instead of value, add __str__ to output value
+# TODO: Ensure values passed are constants or their values
+# TODO: Change string values to int wher epossible. Ex: '10' => 10
+
 import serial
-
-
-class MetaDevice(type):
-    @classmethod
-    def keys(cls, *keys):
-        def wrapper(func):
-            def method(*args, **kwargs):
-                return dict(zip(list(keys), func(*args, **kwargs)))
-            return method
-        return wrapper
 
 
 class Device(object):
@@ -27,7 +23,20 @@ class Device(object):
 
     """
 
-    __metaclass__ = MetaDevice
+    class TOGGLE:
+        OFF = 0
+        ON = 1
+
+    class LINE_DISPLAY_MODE:
+        NORMAL = ' '
+        REVERSE = '*'
+        CURSOR = '_'
+        BLINK = '#'
+
+    class ICON_DISPLAY_MODE:
+        OFF = '0'
+        ON = '1'
+        BLINK = '2'
 
     class KEY_CODE:
         MENU = 'M'
@@ -64,7 +73,7 @@ class Device(object):
 
     class KEY_MODE:
         PRESS = 'P'
-        LONG_RESS = 'L'
+        LONG_PRESS = 'L'
         HOLD = 'H'
         RELEASE = 'R'
 
@@ -74,19 +83,6 @@ class Device(object):
         NFM = 'NFM'
         AM = 'AM'
 
-    class BACKLIGHT:
-        INFINITE = 'IF'
-        TEN_SECONDS = '10'
-        THIRTY_SECONDS = '30'
-        KEYPRESS = 'KY'
-        SQUELCH = 'SQ'
-
-    class DISPLAY_MODE:
-        NORMAL = ' '
-        REVERSE = '*'
-        CURSOR = '_'
-        BLINK = '#'
-
     class ID_SEARCH_MODE:
         SCAN = 0
         SEARCH = 1
@@ -95,52 +91,49 @@ class Device(object):
         CLOSE = 0
         OPEN = 1
 
-    class BOOLEAN:
-        OFF = 0
-        ON = 1
-
-    class BATTERY_SAVE(BOOLEAN):
-        pass
-
-    class KEY_BEEP(BOOLEAN):
-        pass
-
-    class PRIORITY_MODE(BOOLEAN):
-        PLUS_ON = 2
+    class ALERT_STATUS:
+        NO_ALERT = 0
+        ALERT = 1
 
     def __init__(self, port, baudrate=57600, timeout=0.1):
         """ Initialize Device """
+
         self.port = port
         self.baudrate = baudrate
         self.timeout = timeout
-        self.serial = serial.Serial(port, baudrate, timeout=timeout)
-        self.settings = Settings(self)
-        self.systems = Systems(self)
+        self.serial = serial.Serial(port=port, baudrate=baudrate, timeout=timeout)
+        self.settings = self.Settings(self)
+        self.systems = self.Systems(self)
 
-    def __del__(self):
-        """ Close Device """
-        if getattr(self, 'serial', False):
-            self.serial.close()
+    def command(self, command, *args, **kwargs):
+        """ Execute Raw Command """
 
-    def command(self, command, *args):
-        """ Execute Command """
-        args = map(str, args)
-        command = "%s\r" % command if not args else "%s,%s\r" % (command, ','.join(args))
-        self.serial.writelines(command)
+        args = map(str, [arg for arg in args if arg])
+        raw_command = "%s\r" % command if not args else "%s,%s\r" % (command, ','.join(args))
+        self.serial.writelines(raw_command)
+
         response = self.serial.readline().strip()
+        split_response = response.split(',')
         if not response:
             raise SerialTimeoutException
-        if response == "ERR":
+        if split_response[-1] == "ERR":
             raise DeviceErrorException
-        if response.split(',')[-1] == "NG":
+        if split_response[-1] == "NG":
             raise CommandUnavailableException
         if response == "FER":
             raise FramingErrorException
         if response == "ORER":
             raise OverrunErrorException
 
-        response = response.split(',')[1:] if response.split(',')[0] == command.strip() else response
-        return response[0] if len(response) == 1 else response
+        response = split_response[1:]
+
+        if 'keys' in kwargs:
+            return dict(zip(list(kwargs['keys']), response))
+
+        if len(response) == 1:
+            return response[0]
+
+        return response
 
     @property
     def model(self):
@@ -153,9 +146,10 @@ class Device(object):
                 1: MDL
 
             Radio -> Controller
-                2: MDL,BC246T
+                1: MDL,BC246T
 
         """
+
         return self.command('MDL')
 
     @property
@@ -172,70 +166,13 @@ class Device(object):
                 1: VER,VR1.00
 
         """
+
         return self.command('VER')[2:]
-
-    @property
-    @MetaDevice.keys('sys_type', 'tgid', 'id_srch_mode', 'name1', 'name2', 'name3')
-    def talkgroup(self):
-        """
-            Get Current Talkgroup ID Status
-
-            This command returns TGID currently displayed on LCD.
-
-            Controller -> Radio
-                1: GID
-
-            Radio -> Controller
-                1: GID,[SYS_TYPE],[TGID],[ID_SRCH_MODE],[NAME1],[NAME2],[NAME3]
-
-                    [SYS_TYPE]      : System Type
-                    [TGID]          : Talkgroup ID
-                    [ID_SRCH_MODE]  : ID Search Mode (See ID_SEARCH_MODE class)
-                    [NAME1]         : SYSTEM NAME (Alpha Tag)
-                    [NAME2]         : GROUP NAME (Alpha Tag)
-                    [NAME3]         : TGID NAME (Alpha Tag)
-
-        """
-
-        return self.command('GID')
-
-    @property
-    @MetaDevice.keys('l1_char', 'l1_mode', 'l2_char', 'l2_mode', 'icon1', 'icon2', 'reserve', 'sql', 'mut', 'bat', 'wat')
-    def status(self):
-        """
-            Get Current Status
-
-            Returns current scanner status.
-
-            Controller -> Radio
-                1: STS
-
-            Radio -> Controller
-                1: STS,[L1_CHAR],[L1_MODE],[L2_CHAR],[L2_MODE],[ICON1],[ICON2],[RESERVE],[SQL],[MUT],[BAT],[WAT]
-
-                    [L1_CHAR]       : Line1 Characters 16char (fixed length)
-                    [L1_MODE]       : Line1 Display Mode 16char (See DISPLAY_MODE class)
-                    [L2_CHAR]       : Line2 Characters 16char (fixed length)
-                    [L2_MODE]       : Line2 Display Mode 16char (See DISPLAY_MODE class)
-                    [ICON1]         : Icon1 Group Display Mode 15char (0: OFF, 1: ON, 2: BLINK)
-                                        SYS/1/2/3/4/5/6/7/8/9/0/ATT/PRI/KEYLOCK/BATT
-                    [ICON2]         : Icon2 Group Display Mode 17char (0: OFF, 1: ON, 2: BLINK)
-                                        GRP/1/2/3/4/5/6/7/8/9/0/AN/N/FM/LO/F/CC
-                    [RESERVE]       : (Reserved area, not used)
-                    [SQL]           : Squelch Status (See SQUELCH class)
-                    [MUT]           : Mute Status (0: OFF, 1: ON)
-                    [BAT]           : Battery Low Status (0: No Alert, 1: Alert)
-                    [WAT]           : Weather Alert Status (0: No Alert, 1: Alert, ???: NWR-SAME Code)
-
-            NOTE: Line1 or Line2 Characters may include "," as displayed character.
-
-        """
-
-        return self.command('STS')
 
     @property
     def program(self):
         """ Get Program Mode """
+
         return getattr(self, '_program', False)
 
     @program.setter
@@ -280,12 +217,66 @@ class Device(object):
 
         """
 
-        if self.command('PRG' if mode else 'EPG') == 'OK':
-            self._program = mode
-        else:
-            self._program = False
+        self._program = mode if self.command('PRG' if mode else 'EPG') == 'OK' else False
 
-    def key(self, key_code, key_mode):
+    @property
+    def status(self):
+        """
+            Get Current Status
+
+            Returns current scanner status.
+
+            Controller -> Radio
+                1: STS
+
+            Radio -> Controller
+                1: STS,[L1_CHAR],[L1_MODE],[L2_CHAR],[L2_MODE],[ICON1],[ICON2],[RESERVE],[SQL],[MUT],[BAT],[WAT]
+
+                    [L1_CHAR]       : Line1 Characters 16char (fixed length)
+                    [L1_MODE]       : Line1 Display Mode 16char (See LINE_DISPLAY_MODE class)
+                    [L2_CHAR]       : Line2 Characters 16char (fixed length)
+                    [L2_MODE]       : Line2 Display Mode 16char (See LINE_DISPLAY_MODE class)
+                    [ICON1]         : Icon1 Group Display Mode 15char (See ICON_DISPLAY_MODE class)
+                                        SYS/1/2/3/4/5/6/7/8/9/0/ATT/PRI/KEYLOCK/BATT
+                    [ICON2]         : Icon2 Group Display Mode 17char (See ICON_DISPLAY_MODE class)
+                                        GRP/1/2/3/4/5/6/7/8/9/0/AN/N/FM/LO/F/CC
+                    [RESERVE]       : (Reserved area, not used)
+                    [SQL]           : Squelch Status (See SQUELCH class)
+                    [MUT]           : Mute Status (See TOGGLE class)
+                    [BAT]           : Battery Low Status (See ALERT_STATUS class)
+                    [WAT]           : Weather Alert Status (See ALERT_STATUS class, ???: NWR-SAME Code)
+
+            NOTE: Line1 or Line2 Characters may include "," as displayed character.
+
+        """
+
+        return self.command('STS', keys=('l1_char', 'l1_mode', 'l2_char', 'l2_mode', 'icon1', 'icon2', 'reserve', 'sql', 'mut', 'bat', 'wat'))
+
+    @property
+    def talkgroup(self):
+        """
+            Get Current Talkgroup ID Status
+
+            This command returns TGID currently displayed on LCD.
+
+            Controller -> Radio
+                1: GID
+
+            Radio -> Controller
+                1: GID,[SYS_TYPE],[TGID],[ID_SRCH_MODE],[NAME1],[NAME2],[NAME3]
+
+                    [SYS_TYPE]      : System Type
+                    [TGID]          : Talkgroup ID
+                    [ID_SRCH_MODE]  : ID Search Mode (See ID_SRCH_MODE class)
+                    [NAME1]         : SYSTEM NAME (Alpha Tag)
+                    [NAME2]         : GROUP NAME (Alpha Tag)
+                    [NAME3]         : TGID NAME (Alpha Tag)
+
+        """
+
+        return self.command('GID', keys=('sys_type', 'tgid', 'id_srch_mode', 'name1', 'name2', 'name3'))
+
+    def key(self, key_code, key_mode=KEY_MODE.PRESS):
         """
             Push KEY
 
@@ -299,17 +290,19 @@ class Device(object):
                 1: KEY,OK
 
             NOTE: The scanner is not turned off by this command.
+
         """
+
         return self.command('KEY', key_code, key_mode)
 
-    def quick_search(self, frq, stp, mod, atty, dly, skp, code_srch, pgr, rep):
+    def quick_search(self, frq, stp=0, mod=MODULATION.AUTO, att=0, dly=0, skp=0, code_srch=0, scr=00000000, rep=0):
         """
             Go to quick search hold mode
 
             Specifies arbitrary frequency and changes to Quick Search Hold (VFO) mode.
 
             Controller -> Radio
-                1: QSH,[FRQ],[STP],[MOD],[ATT],[DLY],[SKP],[CODE_SRCH],[PGR],[REP]
+                1: QSH,[FRQ],[STP],[MOD],[ATT],[DLY],[SKP],[CODE_SRCH],[SCR],[REP]
 
                     [FRQ]           : Frequency
                     [STP]           : Search Step (0,500,625,750, ... 5000,10000,20000)
@@ -320,18 +313,26 @@ class Device(object):
                                         1000: 10k
                                         1250: 12.5k
                                         1500: 15k
-                                        2000: 20k
-                                        2500: 25k
-                                        5000: 50k
-                                        1000: 100k
-                                        2000: 200k
+                                        20000: 20k
+                                        25000: 25k
+                                        50000: 50k
+                                        10000: 100k
                     [MOD]           : Modulation (See MODULATION class)
-                    [ATT]           : Attenuation (0: OFF, 1: ON)
+                    [ATT]           : Attenuation (See TOGGLE class)
                     [DLY]           : Delay Time (0-5)
-                    [SKP]           : Data Skip (0: OFF, 1: ON)
-                    [CODE_SRCH]     : CTCSS/DCS Search (0: OFF, 1: ON)
-                    [PGR]           : Pager Screen (0: OFF, 1: ON)
-                    [REP]           : Repeater Find (0: OFF, 1: ON)
+                    [SKP]           : Data Skip (See TOGGLE class)
+                    [CODE_SRCH]     : CTCSS/DCS Search (See TOGGLE class)
+                    [SCR]           : Pager/UHF TV Screen (See TOGGLE class)
+                                        (8digit: ########) (See TOGGLE class)
+                                                 |||||||+- Reserved (always 0)
+                                                 ||||||+-- Reserved (always 0)
+                                                 |||||+--- Reserved (always 0)
+                                                 ||||+---- Reserved (always 0)
+                                                 |||+----- Reserved (always 0)
+                                                 ||+------ Reserved (always 0)
+                                                 |+------- UHF TV
+                                                 +-------- Pager
+                    [REP]           : Repeater Find (See TOGGLE class)
 
             Radio -> Controller
                 1: QSH,OK
@@ -341,7 +342,8 @@ class Device(object):
                   Direct Entry operation, and during Quick Save operation.
 
         """
-        return self.command('QSH', frq, stp, mod, atty, dly, skp, code_srch, pgr, rep)
+
+        return self.command('QSH', frq, stp, mod, att, dly, skp, code_srch, scr, rep)
 
     def poweroff(self):
         """
@@ -361,305 +363,610 @@ class Device(object):
         return self.command('POF')
 
 
-class Settings(object):
-    def __init__(self, device):
-        """ Initialize Settings """
-        self.device = device
+    class Settings(object):
+        """ Device Settings """
 
-    def clear(self):
-        """
-            Clear All Memory
+        class BACKLIGHT:
+            INFINITE = 'IF'
+            TEN_SEC = '10'
+            THIRTY_SEC = '30'
+            KEYPRESS = 'KY'
+            SQUELCH = 'SQ'
 
-            All settings are returned to default values.
-            Only PC Control (Baud Rate) retains its value.
+        def __init__(self, device):
+            """ Initialize Settings """
 
-            Controller -> Radio
-                1: CLR
+            self.device = device
 
-            Radio -> Controller
-                1: CLR,OK
+        def clear(self):
+            """
+                Clear All Memory
 
-            NOTE: This command is only acceptable in Programming Mode.
-                  This command needs about 10 seconds execution time.
+                All settings are returned to default values.
+                Only PC Control (Baud Rate) retains its value.
 
-        """
+                Controller -> Radio
+                    1: CLR
 
-        self.device.serial.timeout = 15
-        response = self.device.command('CLR')
-        self.device.serial.timeout = self.device.timeout
+                Radio -> Controller
+                    1: CLR,OK
 
-        return response
+                NOTE: This command is only acceptable in Programming Mode.
+                      This command needs about 10 seconds execution time.
 
-    @property
-    def backlight(self):
-        """
-            Get Backlight
+            """
 
-            Get Backlight Setting.
+            self.device.serial.timeout = 10
+            response = self.device.command('CLR')
+            self.device.serial.timeout = self.device.timeout
 
-            Controller -> Radio
-                1: BLT
+            return response
 
-            Radio -> Controller
-                1: BLT,##
 
-                    ##              : Backlight Setting (see BACKLIGHT class)
+        @property
+        def backlight(self):
+            """
+                Get Backlight
 
-            NOTE: This command is only acceptable in Programming Mode.
+                Get Backlight Setting.
 
-        """
-        return self.device.command('BLT')
+                Controller -> Radio
+                    1: BLT
 
-    @backlight.setter
-    def backlight(self, value):
-        """
-            Set Backlight
+                Radio -> Controller
+                    1: BLT,##
 
-            Set Backlight Setting.
+                        ##              : Backlight Setting (see BACKLIGHT class)
 
-            Controller -> Radio
-                1: BLT,##
+                NOTE: This command is only acceptable in Programming Mode.
 
-                    ##              : Backlight Setting (see BACKLIGHT class)
+            """
 
-            Radio -> Controller
-                1: BLT,OK
+            return self.device.command('BLT')
 
-            NOTE: This command is only acceptable in Programming Mode.
+        @backlight.setter
+        def backlight(self, value):
+            """
+                Set Backlight
 
-        """
-        self.device.command('BLT', value)
+                Set Backlight Setting.
 
-    @property
-    def battery_save(self):
-        """
-            Get Battery Save
+                Controller -> Radio
+                    1: BLT,##
 
-            Get Battery Save Setting.
+                        ##              : Backlight Setting (see BACKLIGHT class)
 
-            Controller -> Radio
-                1: BSV
+                Radio -> Controller
+                    1: BLT,OK
 
-            Radio -> Controller
-                1: BSV,#
+                NOTE: This command is only acceptable in Programming Mode.
 
-                    #               : Battery Save Setting (0: OFF, 1: ON)
+            """
 
-            NOTE: This command is only acceptable in Programming Mode.
+            self.device.command('BLT', value)
 
-        """
-        return bool(self.device.command('BSV'))
+        @property
+        def battery_save(self):
+            """
+                Get Battery Save
 
-    @battery_save.setter
-    def battery_save(self, value):
-        """
-            Set Battery Save
+                Get Battery Save Setting.
 
-            Set Battery Save Setting.
+                Controller -> Radio
+                    1: BSV
 
-            Controller -> Radio
-                1: BSV,#
+                Radio -> Controller
+                    1: BSV,#
 
-                    #               : Battery Save Setting (0: OFF, 1: ON)
+                        #               : Battery Save Setting (See TOGGLE class)
 
-            Radio -> Controller
-                1: BSV,OK
+                NOTE: This command is only acceptable in Programming Mode.
 
-            NOTE: This command is only acceptable in Programming Mode.
+            """
 
-        """
-        self.device.command('BSV', value)
+            return int(self.device.command('BSV'))
 
-    @property
-    def key_beep(self):
-        """
-            Get Key Beep
+        @battery_save.setter
+        def battery_save(self, value):
+            """
+                Set Battery Save
 
-            Get Key Beep Setting.
+                Set Battery Save Setting.
 
-            Controller -> Radio
-                1: KBP
+                Controller -> Radio
+                    1: BSV,#
 
-            Radio -> Controller
-                1: KBP,#
+                        #               : Battery Save Setting (See TOGGLE class)
 
-                    #             : Key Beep Setting (0: OFF, 1: ON)
+                Radio -> Controller
+                    1: BSV,OK
 
-            NOTE: This command is only acceptable in Programming Mode.
+                NOTE: This command is only acceptable in Programming Mode.
 
-        """
-        return bool(self.device.command('KBP'))
+            """
 
-    @key_beep.setter
-    def key_beep(self, value):
-        """
-            Set Key Beep
+            self.device.command('BSV', value)
 
-            Set Key Beep Setting.
+        @property
+        def key_beep(self):
+            """
+                Get Key Beep
 
-            Controller -> Radio
-                1: KBP,#
+                Get Key Beep Setting.
 
-                    #              : Key Beep Setting (0: OFF, 1: ON)
+                Controller -> Radio
+                    1: KBP
 
-            Radio -> Controller
-                1: KBP,OK
+                Radio -> Controller
+                    1: KBP,#
 
-            NOTE: This command is only acceptable in Programming Mode.
+                        #             : Key Beep Setting (See TOGGLE class)
 
-        """
-        self.device.command('KBP', value)
+                NOTE: This command is only acceptable in Programming Mode.
 
-    @property
-    @MetaDevice.keys('l1_char', 'l2_char')
-    def opening_message(self):
-        """
-            Get Opening Message
+            """
 
-            Controller -> Radio
-                1: OMS
+            return int(self.device.command('KBP'))
 
-            Radio -> Controller
-                1: OMS,[L1_CHAR],[L2_CHAR]
+        @key_beep.setter
+        def key_beep(self, value):
+            """
+                Set Key Beep
 
-                    [L1_CHAR]       : Line1 Characters (max 16char)
-                    [L2_CHAR]       : Line2 Characters (max 16char)
+                Set Key Beep Setting.
 
-            NOTE: This command is only acceptable in Programming Mode.
-                  If only space code is set in character area, the command returns the default message.
+                Controller -> Radio
+                    1: KBP,#
 
-        """
-        return self.device.command('OMS')
+                        #              : Key Beep Setting (See TOGGLE class)
 
-    @opening_message.setter
-    def opening_message(self, l1_char, l2_char):
-        """
-            Set Opening Message
+                Radio -> Controller
+                    1: KBP,OK
 
-            Controller -> Radio
-                1: OMS,[L1_CHAR],[L2_CHAR]
+                NOTE: This command is only acceptable in Programming Mode.
 
-                    [L1_CHAR]       : Line1 Characters (max 16char)
-                    [L2_CHAR]       : Line2 Characters (max 16char)
+            """
 
-            Radio -> Controller
-                1: OMS,OK
+            self.device.command('KBP', value)
 
-            NOTE: This command is only acceptable in Programming Mode.
+        @property
+        def opening_message(self):
+            """
+                Get Opening Message
 
-        """
-        self.device.command('OMS', l1_char, l2_char)
+                Controller -> Radio
+                    1: OMS
 
-    @property
-    def priority_mode(self):
-        """
-            Get Priority Mode
+                Radio -> Controller
+                    1: OMS,[L1_CHAR],[L2_CHAR]
 
-            Get Priority Mode Setting.
+                        [L1_CHAR]       : Line1 Characters (max 16char)
+                        [L2_CHAR]       : Line2 Characters (max 16char)
 
-            Controller -> Radio
-                1: PRI
+                NOTE: This command is only acceptable in Programming Mode.
+                      If only space code is set in character area, the command returns the default message.
 
-            Radio -> Controller
-                1: PRI,#
+            """
 
-                    #               : Priority Mode Setting (0: OFF, 1: ON)
+            return self.device.command('OMS', keys=('l1_char', 'l2_char'))
 
-            NOTE: This command is only acceptable in Programming Mode.
+        @opening_message.setter
+        def opening_message(self, (l1_char, l2_char)):
+            """
+                Set Opening Message
 
-        """
-        return int(self.device.command('PRI'))
+                Controller -> Radio
+                    1: OMS,[L1_CHAR],[L2_CHAR]
 
-    @priority_mode.setter
-    def priority_mode(self, value):
-        """
-            Set Priority Mode
+                        [L1_CHAR]       : Line1 Characters (max 16char)
+                        [L2_CHAR]       : Line2 Characters (max 16char)
 
-            Set Priority Mode Setting.
+                Radio -> Controller
+                    1: OMS,OK
 
-            Controller -> Radio
-                1: PRI,#
+                NOTE: This command is only acceptable in Programming Mode.
 
-                    #               : Priority Mode Setting (0: OFF, 1: ON)
+            """
 
-            Radio -> Controller
-                1: PRI,OK
+            self.device.command('OMS', l1_char, l2_char)
 
-            NOTE: This command is only acceptable in Programming Mode.
+        @property
+        def priority_mode(self):
+            """
+                Get Priority Mode
 
-        """
-        self.device.command('PRI', value)
+                Get Priority Mode Setting.
 
+                Controller -> Radio
+                    1: PRI
 
-class System(object):
-    class TYPE:
-        CONVENTIONAL = 'CNV'
-        MOT_800_T2_STD = 'M82S'
-        MOT_800_T2_SPL = 'M82P'
-        MOT_900_T2 = 'M92'
-        MOT_VHF_T2 = 'MV2'
-        MOT_UHF_T2 = 'MU2'
-        MOT_800_T1_STD = 'M81S'
-        MOT_800_T1_SPL = 'M81P'
-        EDACS_NARROW = 'EDN'
-        EDACS_WIDE = 'EDW'
-        EDACS_SCAT = 'EDS'
-        LTR = 'LTR'
+                Radio -> Controller
+                    1: PRI,#
 
-    def __init__(self, sys_type=TYPE.CONVENTIONAL, name=None, quick_key=None, hld=None, lout=None, att=None, dly=None, skp=None, emg=None):
-        """ Initialize System """
-        self.index = None
-        self.type = sys_type
+                        #               : Priority Mode Setting (See TOGGLE class)
 
+                NOTE: This command is only acceptable in Programming Mode.
 
-class Systems(list):
-    def __init__(self, device):
-        """ Initialize Systems """
-        self.device = device
+            """
 
-    def __len__(self):
-        """
-            Get System Count
+            return int(self.device.command('PRI'))
 
-            Returns the number of stored Systems.
+        @priority_mode.setter
+        def priority_mode(self, value):
+            """
+                Set Priority Mode
 
-            Controller -> Radio
-                1: SCT
+                Set Priority Mode Setting.
 
-            Radio -> Controller
-                1:SCT,###
+                Controller -> Radio
+                    1: PRI,#
 
-                    ###             : Number of Systems (0-200)
+                        #               : Priority Mode Setting (See TOGGLE class)
 
-            NOTE: This command is only acceptable in Programming Mode.
+                Radio -> Controller
+                    1: PRI,OK
 
-        """
-        return int(self.device.command('SCT'))
+                NOTE: This command is only acceptable in Programming Mode.
 
-    def __iter__(self):
-        # for i in range(self.head, self.tail):
-        for i in range(self.head, self.head + len(self)):
-            yield self[i]
+            """
 
-    def __getitem__(self, index):
-        args = self.device.command('SIN', index)
-        system = System(*args)
-        system.index = index
-        return system
+            self.device.command('PRI', value)
 
-    def append(self, system):
-        system.index = self.device.command('CSY', system.type)
+    Settings.TOGGLE = TOGGLE
 
-    def remove(self, system):
-        print self.device.command('DSY', system.index)
 
-    @property
-    def head(self):
-        return int(self.device.command('SIH'))
+    class System(object):
+        """ Device System """
 
-    @property
-    def tail(self):
-        return int(self.device.command('SIT'))
+        class SYS_TYPE:
+            CONVENTIONAL = 'CNV'
+            MOT_800_T2_STD = 'M82S'
+            MOT_800_T2_SPL = 'M82P'
+            MOT_900_T2 = 'M92'
+            MOT_VHF_T2 = 'MV2'
+            MOT_UHF_T2 = 'MU2'
+            MOT_800_T1_STD = 'M81S'
+            MOT_800_T1_SPL = 'M81P'
+            EDACS_NARROW = 'EDN'
+            EDACS_WIDE = 'EDW'
+            EDACS_SCAT = 'EDS'
+            LTR = 'LTR'
+            MOT_800_T2_CUS = 'M82C'
+            MOT_800_T1_CUS = 'M81C'
+
+        class QUICK_KEY:
+            ONE = 1
+            TWO = 2
+            THREE = 3
+            FOUR = 4
+            FIVE = 5
+            SIX = 6
+            SEVEN = 7
+            EIGHT = 8
+            NINE = 9
+            TEN = 0
+            NONE = '.'
+
+        class LOUT:
+            UNLOCKED = 0
+            LOCKED = 1
+
+        class EMG:
+            IGNORE = 0
+            ALERT = 1
+
+        def __init__(self, device, index=None, sys_type=SYS_TYPE.CONVENTIONAL, name=None, quick_key=None, hld=None, lout=None, att=None, dly=None, skp=None, emg=None):
+            """ Initialize System """
+
+            self.device = device
+
+            self.index = index
+            self.sys_type = sys_type
+            self.name = name
+            self.quick_key = quick_key
+            self.hld = hld
+            self.lout = lout
+            self.att = att
+            self.dly = dly
+            self.skp = skp
+            self.emg = emg
+
+            self.rev_index = -1
+            self.fwd_index = -1
+            self.chn_grp_head = -1
+            self.chn_grp_tail = -1
+            self.seq_no = -1
+
+        @property
+        def index(self):
+            """ System Index getter """
+
+            return int(getattr(self, '_index', -1))
+
+        @index.setter
+        def index(self, index):
+            """ System Index setter """
+
+            self._index = index
+            if index:
+                info = self.device.systems.info(index)
+                map(lambda (k, v): setattr(self, k, v), info.items())
+
+        def info(self):
+            """ Device.Systems.info pass-through """
+
+            if not self.index:
+                raise CommandUnavailableException
+
+            return self.device.systems.info(self.index)
+
+        def remove(self):
+            """ Device.Systems.remove pass-through """
+
+            if not self.index:
+                raise CommandUnavailableException
+
+            return self.device.systems.remove(self.index)
+
+        def group_quick_lockout(self, value):
+            """ Device.Systems.group_quick_lockout pass-through """
+
+            if not self.index:
+                raise CommandUnavailableException
+
+            return self.device.systems.group_quick_lockout(self.index)
+
+    System.TOGGLE = TOGGLE
+
+
+    class Systems(list):
+        """ Device Systems """
+
+        def __init__(self, device):
+            """ Initialize Systems """
+
+            self.device = device
+
+        def __len__(self):
+            """
+                Get System Count
+
+                Returns the number of stored Systems.
+
+                Controller -> Radio
+                    1: SCT
+
+                Radio -> Controller
+                    1:SCT,###
+
+                        ###             : Number of Systems (0-200)
+
+                NOTE: This command is only acceptable in Programming Mode.
+
+            """
+
+            return int(self.device.command('SCT'))
+
+        def __iter__(self):
+            for i in range(self.head, self.tail):
+                yield self[i]
+
+        def __getitem__(self, index):
+            system = Device.System(self.device)
+            system.index = index
+            return system
+
+        def __str__(self):
+            return str(range(self.head, self.tail))
+
+        @property
+        def head(self):
+            """
+                Get System Index Head
+
+                Returns the first index of stored system list.
+
+                Controller -> Radio
+                    1: SIH
+
+                Radio -> Controller
+                    1:SIH,[SYS_INDEX]
+
+                        [SYS_INDEX]     : System Index
+
+                NOTE: This command is only acceptable in Programming Mode.
+
+            """
+
+            return int(self.device.command('SIH'))
+
+        @property
+        def tail(self):
+            """
+                Get System Index Tail
+
+                Returns the last index of stored system list.
+
+                Controller -> Radio
+                    1: SIT
+
+                Radio -> Controller
+                    1:SIT,[SYS_INDEX]
+
+                        [SYS_INDEX]     : System Index
+
+                NOTE: This command is only acceptable in Programming Mode.
+
+            """
+
+            return int(self.device.command('SIT'))
+
+        def append(self, system):
+            """
+                Create System
+
+                Creates a system and returns created system index.
+
+                Controller -> Radio
+                    1: CSY,[SYS_TYPE]
+
+                        [SYS_TYPE]      : System Type (See Device.System.SYS_TYPE class)
+
+                Radio -> Controller
+                    1: CSY,[SYS_INDEX]
+
+                        [SYS_INDEX]     : The Index if Created System
+
+                NOTE: The index is a handle to get/set system information.
+                      Returns -1 if the scanner failed to create because of no resource.
+                      This command is only acceptable in Programming Mode.
+
+            """
+
+            system.index = self.device.command('CSY', system.sys_type)
+
+        def remove(self, index):
+            """
+                Delete System
+
+                Deletes a system.
+
+                Controller -> Radio
+                    1: DSY,[SYS_INDEX]
+
+                    [SYS_INDEX]     : System Index
+
+                Radio -> Controller
+                    1: DSY,OK
+
+                NOTE: This command is only acceptable in Programming Mode.
+
+            """
+
+            return self.device.command('DSY', index)
+
+        def info(self, index, name=None, quick_key=None, hld=None, lout=None, att=None, dly=None, skp=None, emg=None):
+            """
+                Get/Set System Info
+
+                Get/Set System Information.
+
+                Controller -> Radio
+                    1: SIN,[INDEX]
+
+                    [INDEX]         : System Index
+
+                    2: SIN,[SYS_TYPE],[NAME],[QUICK_KEY],[HLD],[LOUT],[ATT],[DLY],[SKP],[EMG]
+
+                    [SYS_TYPE]      : System Type (See Device.System.SYS_TYPE class)
+                    [NAME]          : Name (max 16char)
+                    [QUICK_KEY]     : Quick Key (See QUICK_KEY class)
+                    [HLD]           : System Hold Time (0-255)
+                    [LOUT]          : Lockout (See LOUT class)
+                    [ATT]           : Attenuation (See TOGGLE class)
+                    [DLY]           : Delay Time (0-5)
+                    [SKP]           : Data Skip (See TOGGLE class)
+                    [EMG]           : Emergency Alert (See EMG class)
+
+                Radio -> Controller
+                    1: SIN,[SYS_TYPE],[NAME],[QUICK_KEY],[HLD],[LOUT],[ATT],[DLY],[SKP],[EMG],[REV_INDEX],[FWD_INDEX],[CHN_GRP_HEAD],[CHN_GRP_TAIL],[SEQ_NO]
+
+                    [SYS_TYPE]      : System Type (See Device.System.SYS_TYPE class)
+                    [NAME]          : Name (max 16char)
+                    [QUICK_KEY]     : Quick Key (See QUICK_KEY class)
+                    [HLD]           : System Hold Time (0-255)
+                    [LOUT]          : Lockout (See LOUT class)
+                    [ATT]           : Attenuation (See TOGGLE class)
+                    [DLY]           : Delay Time (0-5)
+                    [SKP]           : Data Skip (See TOGGLE class)
+                    [EMG]           : Emergency Alert (See EMG class)
+                    [REV_INDEX]     : Reverse System Index
+                    [FWD_INDEX]     : Forward System Index
+                    [CHN_GRP_HEAD]  : Channel Group Index Head
+                    [CHN_GRP_TAIL]  : Channel Group Index Tail
+                    [SEQ_NO]        : System Sequence Number (1-200)
+
+                    2: SIN,OK
+
+                NOTE: The scanner does not return a value for parameters which are not appropriate for the system type.
+                      The scanner does not set a value for parameters which are not appropriate for the system type.
+                      Only provided parameters are changed.
+                      The command is aborted if any format error is detected.
+                      This command is only acceptable in Programming Mode.
+
+            """
+
+            return self.device.command('SIN', index, keys=('sys_type', 'name', 'quick_key', 'hld', 'lout', 'att', 'dly', 'skp', 'emg', 'rev_index', 'fwd_index', 'chn_grp_head', 'chn_grp_tail', 'seq_no'))
+
+        @property
+        def system_quick_lockout(self):
+            """
+                Get System Quick Lockout
+
+                Returns the System Quick Key status.
+
+                Controller -> Radio
+                    1: QSL
+
+                Radio -> Controller
+                    1: QSL,##########
+
+                    ##########      : System Quick Key status (See TOGGLE class)
+
+                NOTE: This command is only acceptable in Programming Mode.
+
+            """
+
+            return self.device.command('QSL')
+
+        @system_quick_lockout.setter
+        def system_quick_lockout(self, value):
+            """
+                Set System Quick Lockout
+
+                Sets the System Quick Key status.
+
+                Controller -> Radio
+                    1: QSL,##########
+
+                    ##########      : System Quick Key status (See TOGGLE class)
+
+                Radio -> Controller
+                    1: QSL,OK
+
+                NOTE: This cannot turn on/off a Quick Key that has no System.
+                      This command is only acceptable in Programming Mode.
+
+            """
+
+            return self.device.command('QSL', value)
+
+        def group_quick_lockout(self, index, value=None):
+            """
+                Get/Set Group Quick Lockout
+
+                Returns/Sets Group Quick Key status of a System
+
+                Controller -> Radio
+                    1: QGL,[SYS_INDEX]
+                    2: QGL,[SYS_INDEX],##########
+
+                    ##########      : System Quick Key status (See TOGGLE class)
+
+                Radio -> Controller
+                    1: QGL,##########
+                    2: QGL,OK
+
+                    ##########      : System Quick Key status (See TOGGLE class)
+
+                NOTE: This cannot turn on/off a Quick Key that has no Group.
+                      This command is only acceptable in Programming Mode.
+
+            """
+
+            return self.device.command('QGL', index, value)
+
+    Systems.TOGGLE = TOGGLE
 
 
 class SerialTimeoutException(Exception):
@@ -687,104 +994,6 @@ class OverrunErrorException(Exception):
         Exception.__init__(self, "Overrun error")
 
 
-import unittest
-
-
-class TestCase(unittest.TestCase):
-    def setUp(self):
-        self.port = '/dev/ttyUSB0'
-        self.dev = Device(port=self.port)
-
-    def tearDown(self):
-        self.dev = None
-
-    def assertStringNotEmpty(self, value):
-        self.assertIs(type(value), str)
-        self.assertGreater(len(value), 0)
-
-    def assertDictNotEmpty(self, value):
-        self.assertIs(type(value), dict)
-        self.assertGreater(len(filter(lambda x: x, value.values())), 0)
-
-    def assertValidValue(self, value, obj_type, options):
-        self.assertIs(type(value), obj_type)
-        self.assertIn(value, [getattr(options, attr) for attr in filter(lambda x: not x.startswith('_'), dir(options))])
-
-    def assertBooleanSet(self, value):
-        _value = value
-        value = not _value
-        getattr(self, 'assert%s' % (not _value))(value)
-        value = _value
-
-
-class DeviceTestCase(TestCase):
-    def test_get_port(self):
-        self.assertIs(type(self.dev.port), str)
-        self.assertEqual(self.dev.port, self.port)
-
-    def test_get_baudrate(self):
-        self.assertIs(type(self.dev.baudrate), int)
-        self.assertGreater(self.dev.baudrate, 0)
-
-    def test_get_model(self):
-        self.assertStringNotEmpty(self.dev.model)
-
-    def test_get_firmware(self):
-        self.assertStringNotEmpty(self.dev.firmware)
-
-    def test_get_talkgroup(self):
-        self.assertIs(type(self.dev.talkgroup), dict)
-
-    def test_get_status(self):
-        self.assertDictNotEmpty(self.dev.status)
-
-    def test_get_program(self):
-        self.assertIs(type(self.dev.program), bool)
-
-    def test_set_program(self):
-        self.assertBooleanSet(self.dev.program)
-
-
-class SettingsTestCase(TestCase):
-    def setUp(self):
-        TestCase.setUp(self)
-        self.dev.program = True
-
-    def tearDown(self):
-        self.dev.program = False
-        TestCase.tearDown(self)
-
-    def test_get_backlight(self):
-        self.assertValidValue(self.dev.settings.backlight, str, Device.BACKLIGHT)
-
-    def test_set_backlight(self):
-        pass
-
-    def test_get_battery_save(self):
-        self.assertValidValue(self.dev.settings.battery_save, bool, Device.BATTERY_SAVE)
-
-    def test_set_battery_save(self):
-        pass
-
-    def test_get_key_beep(self):
-        self.assertValidValue(self.dev.settings.key_beep, bool, Device.KEY_BEEP)
-
-    def test_set_key_beep(self):
-        pass
-
-    def test_get_opening_message(self):
-        self.assertDictNotEmpty(self.dev.settings.opening_message)
-
-    def test_set_opening_message(self):
-        pass
-
-    def test_get_priority_mode(self):
-        self.assertValidValue(self.dev.settings.priority_mode, int, Device.PRIORITY_MODE)
-
-    def test_set_priority_mode(self):
-        pass
-
-
 if __name__ == '__main__':
     from optparse import OptionParser
 
@@ -793,6 +1002,13 @@ if __name__ == '__main__':
     parser.add_option('-b', '--baud', dest='baud', metavar='BAUDRATE', default=57600, help="set baud rate, default %default")
     parser.add_option('-t', '--timeout', dest='timeout', metavar='TIMEOUT', default=0.1, help="a read timeout value, default %default")
     options, args = parser.parse_args()
+
+    def print_help():
+        parser.print_help()
+        exit(-1)
+
+    if not len(args):
+        print_help()
 
     try:
         options.port = '/dev/ttyUSB%d' % int(options.port)
@@ -803,50 +1019,3 @@ if __name__ == '__main__':
         dev = Device(port=options.port, baudrate=options.baud, timeout=options.timeout)
     except serial.serialutil.SerialException, error:
         exit("%s: %s" % (__file__, error))
-
-    def print_help():
-        parser.print_help()
-        exit(-1)
-
-    if not len(args):
-        print_help()
-
-    command = args.pop(0)
-
-    ret = dev
-    for attr in command.split('.'):
-        try:
-            ret = getattr(ret, attr)
-        except CommandUnavailableException:
-            dev.program = True
-            ret = getattr(ret, attr)
-            dev.program = False
-        except AttributeError, error:
-            print_help()
-
-    if callable(ret):
-        if not len(args):
-            print_help()
-        ret = ret(*args)
-    print ret
-
-    # dev.program = True
-    # if dev.program:
-    #     # print "System Count: %s" % len(dev.systems)
-    #     # for i in range(1, 2):
-    #     #     sys = System()
-    #     #     dev.systems.append(sys)
-
-    #     print "System Count: %s" % len(dev.systems)
-    #     for sys in dev.systems:
-    #         print "Index: %s" % sys.index
-    #         # dev.systems.remove(sys)
-    #     print "System Count: %s" % len(dev.systems)
-
-    #     print "System Head: %s" % dev.systems.head
-    #     print "System Tail: %s" % dev.systems.tail
-
-    #     # print "Clearing settings..."
-    #     # dev.settings.clear()
-
-    #     dev.program = False
