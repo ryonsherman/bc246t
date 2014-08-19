@@ -1,4 +1,4 @@
-TARGET=bc246t
+TARGET=main
 SRC=$(TARGET).o usart.o spi.o sd.o fat16.o
 
 PRG_DEV=/dev/ttyS0

@@ -1,4 +1,4 @@
-#include "bc246t.h"
+#include "main.h"
 
 unsigned char SD_command(unsigned char cmd, unsigned long arg,
                          unsigned char crc, unsigned char read) {

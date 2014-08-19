@@ -1,4 +1,4 @@
-#include "bc246t.h"
+#include "main.h"
 
 void USART_init(unsigned int ubrr) {
   UBRRH = (unsigned char) (ubrr >> 8);
@@ -25,8 +25,7 @@ void USART_printhex(unsigned char n) {
 }
 
 void USART_printstr(char *str) {
-  while (*str) 
-    USART_printch(*str++);
+  while (*str) USART_printch(*str++);
 }
 
 void USART_println(char *str) {

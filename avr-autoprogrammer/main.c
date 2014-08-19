@@ -1,4 +1,4 @@
-#include "bc246t.h"
+#include "main.h"
 
 int main() {
   char ret;
