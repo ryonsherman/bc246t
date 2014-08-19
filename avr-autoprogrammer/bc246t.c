@@ -7,11 +7,11 @@ int main() {
 
   USART_printstr("\r\n");
   USART_println("Initializing");
-  USART_printstr("SPI...");
+  USART_printstr(" SPI...");
   SPI_init();
   USART_println("done");
 
-  USART_printstr("SD...");
+  USART_printstr(" SD...");
   if ((ret = SD_init())) {
     USART_printstr("error: ");
     USART_printhex(ret);
@@ -20,7 +20,7 @@ int main() {
   }
   USART_println("done");
 
-  USART_printstr("FAT16...");
+  USART_printstr(" FAT16...");
   if ((ret = FAT16_init())) {
     USART_printstr("error: ");
     USART_printhex(ret);

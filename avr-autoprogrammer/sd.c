@@ -5,7 +5,7 @@ unsigned char SD_command(unsigned char cmd, unsigned long arg,
   unsigned char i, buffer[8], ret = 0xFF;
 
   #ifdef DEBUG
-    USART_printstr(" CMD ");
+    USART_printstr("  CMD ");
     USART_printhex(cmd);
   #endif
 
@@ -52,15 +52,19 @@ char SD_init() {
     USART_printstr("\r\n");
   #endif
   for (i = 0; i < 10 && SD_command(0x40, 0x00000000, 0x95, 8) != 1; i++) {
+    _delay_ms(100);
     #ifndef DEBUG
-      USART_printch('.');
-      _delay_ms(100);
-    #endif    
+      USART_printch('.');      
+    #endif
   }
   if (i == 10) return -1;
 
-  for (i = 0; i < 10 && SD_command(0x41, 0x00000000, 0xFF, 8) != 0; i++)
+  for (i = 0; i < 10 && SD_command(0x41, 0x00000000, 0xFF, 8) != 0; i++) {
     _delay_ms(100);
+    #ifndef DEBUG
+      USART_printch('.');      
+    #endif
+  }
   if (i == 10) return -2;
 
   SD_command(0x50, 0x00000200, 0xFF, 8);
