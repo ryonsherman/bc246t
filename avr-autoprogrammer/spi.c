@@ -1,5 +1,4 @@
 #include "bc246t.h"
-#include "spi.h"
 
 void SPI_init() {
   DDRB  &= ~DI;

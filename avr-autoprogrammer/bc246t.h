@@ -11,5 +11,7 @@
 #define CS_ENABLE()  (PORTB &= ~CS)
 #define CS_DISABLE() (PORTB |=  CS)
 
+#include "usart.h"
 #include "spi.h"
+#include "sd.h"
 #include "fat16.h"

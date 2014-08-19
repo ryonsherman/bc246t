@@ -1,9 +1,9 @@
 TARGET=bc246t
-SRC=$(TARGET).o spi.o fat16.o
+SRC=$(TARGET).o usart.o spi.o sd.o fat16.o
 
 PRG_DEV=/dev/ttyS0
 PRG_TYPE=usbasp
-CFLAGS=-g -Wall -Os -Werror -Wextra -mmcu=attiny2313
+CFLAGS=-g -Wall -Os -Werror -Wextra -mmcu=attiny2313 -DDEBUG
 
 $(TARGET).elf: $(SRC)
 	avr-gcc $(CFLAGS) *.o -o $@	
